@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Drift VR Quest 2</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#07090d;font-family:Arial;color:white}
+#hud{position:fixed;z-index:10;left:14px;top:14px;background:#000b;padding:12px 15px;border-radius:14px}
+#vr{margin-top:8px;padding:10px 15px;border:0;border-radius:10px;font-weight:bold}
+#hint{font-size:12px;opacity:.8;margin-top:6px;line-height:1.4}
+</style>
+</head>
+<body>
+<div id="hud">
+<b>DRIFT VR — QUEST 2</b><br>
+<span id="info">Pantalla · 0 km/h · 0 puntos</span>
+<div id="hint">Quest 2: stick izquierdo = dirección · gatillo derecho = acelerar · gatillo izquierdo = frenar · A = freno de mano · B = cámara</div>
+<button id="vr">🥽 ENTRAR EN VR</button>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import {VRButton} from "three/addons/webxr/VRButton.js";
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x10151b);
+scene.fog=new THREE.Fog(0x10151b,40,180);
+
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.05,500);
+camera.position.set(0,4,8);
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.xr.enabled=true;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xbdd7ff,0x303030,2));
+const sun=new THREE.DirectionalLight(0xffffff,2.2);
+sun.position.set(20,30,10);scene.add(sun);
+
+const ground=new THREE.Mesh(
+ new THREE.PlaneGeometry(220,220),
+ new THREE.MeshStandardMaterial({color:0x263028,roughness:1})
+);
+ground.rotation.x=-Math.PI/2;scene.add(ground);
+
+// Pista circular para derrapar
+const track=new THREE.Mesh(
+ new THREE.RingGeometry(18,30,96),
+ new THREE.MeshStandardMaterial({color:0x383b3f,roughness:.95,side:THREE.DoubleSide})
+);
+track.rotation.x=-Math.PI/2;track.position.y=.015;scene.add(track);
+
+const lineMat=new THREE.MeshBasicMaterial({color:0xffffff});
+for(let r of [18,30]){
+ const g=new THREE.RingGeometry(r-.04,r+.04,96);
+ const m=new THREE.Mesh(g,lineMat);m.rotation.x=-Math.PI/2;m.position.y=.03;scene.add(m);
+}
+
+// Auto low-poly
+const car=new THREE.Group();
+const body=new THREE.Mesh(new THREE.BoxGeometry(1.65,.5,3.4),new THREE.MeshStandardMaterial({color:0xe53935,metalness:.15,roughness:.45}));
+body.position.y=.65;car.add(body);
+const cabin=new THREE.Mesh(new THREE.BoxGeometry(1.25,.42,1.5),new THREE.MeshStandardMaterial({color:0x111820,roughness:.25,metalness:.1}));
+cabin.position.set(0,1.03,-.15);car.add(cabin);
+const bumper=new THREE.Mesh(new THREE.BoxGeometry(1.72,.22,.18),new THREE.MeshStandardMaterial({color:0x151515}));
+bumper.position.set(0,.53,1.72);car.add(bumper);
+const wheelGeo=new THREE.CylinderGeometry(.34,.34,.22,20);
+const wheelMat=new THREE.MeshStandardMaterial({color:0x090909});
+for(const x of [-.88,.88])for(const z of [-1.12,1.12]){
+ const w=new THREE.Mesh(wheelGeo,wheelMat);w.rotation.z=Math.PI/2;w.position.set(x,.4,z);car.add(w);
+}
+scene.add(car);
+
+// Árboles/obstáculos
+for(let i=0;i<28;i++){
+ const a=i/28*Math.PI*2;
+ const r=34+(i%3)*5;
+ const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.3,.4,2,8),new THREE.MeshStandardMaterial({color:0x5a3925}));
+ trunk.position.set(Math.cos(a)*r,1,Math.sin(a)*r);
+ const crown=new THREE.Mesh(new THREE.ConeGeometry(1.6,3.5,8),new THREE.MeshStandardMaterial({color:0x1d5b35}));
+ crown.position.copy(trunk.position);crown.position.y=3.4;
+ scene.add(trunk,crown);
+}
+
+let speed=0,side=0,score=0,camMode=0;
+const input={steer:0,gas:0,brake:0,hand:false};
+let prevA=false,prevB=false;
+
+function readControllers(){
+ input.steer=0;input.gas=0;input.brake=0;input.hand=false;
+ for(const src of renderer.xr.getSession()?.inputSources||[]){
+  const g=src.gamepad;if(!g)continue;
+  if(src.handedness==="left"){
+   input.steer=Math.abs(g.axes[2]??g.axes[0]??0)>.12?(g.axes[2]??g.axes[0]):0;
+   input.hand=!!g.buttons[1]?.pressed;
+  }else if(src.handedness==="right"){
+   input.gas=g.buttons[0]?.value||0;
+   input.brake=g.buttons[1]?.value||0;
+   const a=!!g.buttons[4]?.pressed,b=!!g.buttons[5]?.pressed;
+   if(a&&!prevA)input.hand=true;
+   if(b&&!prevB)camMode=(camMode+1)%2;
+   prevA=a;prevB=b;
+  }
+ }
+}
+function update(dt){
+ readControllers();
+ speed+=input.gas*25*dt-input.brake*35*dt;
+ speed*=Math.pow(.992,dt*60);
+ speed=THREE.MathUtils.clamp(speed,0,35);
+ const turn=(.45+speed/22)*input.steer;
+ car.rotation.y+=turn*dt;
+ side*=Math.max(0,1-(input.hand?1.8:7)*dt);
+ side+=input.steer*speed*.09*dt;
+ const f=new THREE.Vector3(0,0,-1).applyQuaternion(car.quaternion);
+ const right=new THREE.Vector3(1,0,0).applyQuaternion(car.quaternion);
+ car.position.addScaledVector(f,speed*dt);
+ car.position.addScaledVector(right,side*dt);
+ if(Math.abs(side)>2.5&&speed>10)score+=Math.abs(side)*dt*4;
+
+ if(camMode===0){
+  const target=new THREE.Vector3(0,2.2,6).applyQuaternion(car.quaternion).add(car.position);
+  camera.position.lerp(target,.08);camera.lookAt(car.position.x,car.position.y+.7,car.position.z);
+ }else{
+  const target=new THREE.Vector3(0,5,9).applyQuaternion(car.quaternion).add(car.position);
+  camera.position.lerp(target,.08);camera.lookAt(car.position);
+ }
+ document.getElementById("info").textContent=`${renderer.xr.isPresenting?"VR activo":"Pantalla"} · ${Math.round(speed*7)} km/h · ${Math.floor(score)} puntos`;
+}
+
+window.addEventListener("resize",()=>{
+ camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);
+});
+
+// Botón WebXR real. VRButton se encarga de solicitar immersive-vr.
+const vrButton=VRButton.createButton(renderer);
+vrButton.style.display="none";
+document.body.appendChild(vrButton);
+document.getElementById("vr").onclick=()=>vrButton.click();
+
+renderer.setAnimationLoop((t,frame)=>{
+ const dt=Math.min(.04,renderer.clock?.getDelta?.()||.016);
+ update(dt||.016);
+ renderer.render(scene,camera);
+});
+</script>
+</body>
+</html>
